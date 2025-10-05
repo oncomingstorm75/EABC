@@ -1,0 +1,19 @@
+% Example EABC notation for testing
+T: Amazing Grace
+C: John Newton
+M: 3/4
+L: 1/4
+Q: 1/4=90
+K: G
+
+% Verse 1
+w: A - ma - zing grace how sweet the sound
+{dyn:mf}{vib:50,40,200}G2 B | d2 B | {dyn:f}d2 e | d2 B |
+w: That saved a wretch like me
+G2 A | B2 G | {dyn:mp}E2 D | G2 z |
+
+% Verse 2  
+w: I once was lost but now am found
+{dyn:p}{ten:70}G2 B | d2 B | d2 e | {dyn:mf}d2 B |
+w: Was blind but now I see
+G2 A | {vib:60,45,150}{dyn:f}B2 G | E2 D | G2 z |

@@ -38,6 +38,13 @@ export default function EABCToAceEncoder() {
     });
     
     lines.forEach(line => {
+      // Skip metadata lines
+      if (line.startsWith('T:') || line.startsWith('C:') || 
+          line.startsWith('M:') || line.startsWith('L:') || 
+          line.startsWith('K:') || line.startsWith('Q:')) {
+        return;
+      }
+      
       if (line.startsWith('w:') || line.startsWith('"w:')) {
         const lyricLine = line.replace(/^"?w:/, '').replace(/"$/, '');
         currentLyrics = lyricLine;
@@ -121,11 +128,18 @@ export default function EABCToAceEncoder() {
     return Math.round(duration);
   };
 
-  const pitchToMidi = (pitch) => {
+  const pitchToMidi = (pitch, key) => {
     const noteMap = { 'C': 0, 'D': 2, 'E': 4, 'F': 5, 'G': 7, 'A': 9, 'B': 11 };
     const note = pitch[0].toUpperCase();
     let octave = 4;
     let midiNote = noteMap[note];
+    
+    // Apply key signature accidentals
+    if (key && key.includes('#') && key[0] === note) {
+      midiNote++;
+    } else if (key && key.includes('b') && key[0] === note) {
+      midiNote--;
+    }
     
     for (let i = 1; i < pitch.length; i++) {
       if (pitch[i] === "'") octave++;
