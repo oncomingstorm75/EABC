@@ -606,7 +606,7 @@ export default function EABCToAceEncoder() {
     }
   };
 
-  const downloadSimpleACEP = () => {
+  const downloadRealACEP = () => {
     try {
       if (!zstd) {
         setStatus('❌ Zstd codec not initialized yet, please try again');
@@ -618,37 +618,213 @@ export default function EABCToAceEncoder() {
         return;
       }
       
-      setStatus('⏳ Creating simple .acep format...');
+      setStatus('⏳ Creating REAL Ace Studio format...');
       
-      // Create a simpler project structure that might be more compatible
-      const simpleProject = JSON.parse(output);
+      const { metadata, notes } = parseEABC(input);
       
-      // Simplify the structure for better compatibility
-      const simplifiedProject = {
-        version: "1.0.0",
-        tempo: simpleProject.tempo || 120,
-        tracks: [{
-          notes: simpleProject.tracks[0].notes.map(note => ({
-            pos: note.pos,
-            length: note.length,
-            pitch: note.pitch,
-            lyric: note.lyric || "",
-            tension: note.tension || 1.0,
-            breathiness: note.breathiness || 0.0,
-            energy: note.energy || 1.0,
-            falsetto: note.falsetto || 0.0,
-            gender: note.gender || 1.0,
-            pitchDelta: note.pitchDelta || 0
-          }))
-        }]
+      // Create the REAL Ace Studio project structure based on the reverse-engineered format
+      const realAceProject = {
+        colorIndex: 0,
+        debugInfo: {
+          studioVersion: {
+            build: "1228",
+            version: "1.9.12"
+          }
+        },
+        duration: notes.length > 0 ? notes[notes.length - 1].tick + notes[notes.length - 1].duration : 4800,
+        extraInfo: {},
+        loop: false,
+        loopEnd: 7680,
+        loopStart: 0,
+        master: {
+          gain: 0
+        },
+        mergedPatternIndex: 0,
+        patternIndividualColorIndex: 16,
+        pianoCells: 2147483646,
+        pianoDisplayConfig: {
+          backgroundHint: {
+            fold: false,
+            isOn: false,
+            keySignature: metadata.key || "C",
+            mode: "scale",
+            scale: "Major"
+          }
+        },
+        recordPatternIndex: 0,
+        singer_library_id: "1203670188",
+        svcResults: [],
+        tempos: [
+          {
+            bpm: metadata.tempo || 120,
+            isLerp: false,
+            position: 0
+          }
+        ],
+        timeSignatures: [
+          {
+            barPos: 0,
+            denominator: parseInt(metadata.meter.split('/')[1]) || 4,
+            numerator: parseInt(metadata.meter.split('/')[0]) || 4
+          }
+        ],
+        trackCells: 2147483646,
+        trackControlPanelW: 0,
+        tracks: [
+          {
+            builtInFx: {
+              basicFx: {
+                compressor: {
+                  enabled: false,
+                  gain: 4,
+                  threshold: -26
+                },
+                deEsser: {
+                  enabled: false,
+                  freq: 6500,
+                  listen: false,
+                  threshold: -32
+                },
+                enabled: true,
+                presetsVersion: 0,
+                reverb: {
+                  enabled: true,
+                  mixRatio: 0.1,
+                  preset: "Hall"
+                },
+                threeBandEqualizer: {
+                  enabled: false,
+                  high: 0,
+                  low: 0,
+                  mid: 0
+                },
+                vocalEqualizer: {
+                  enabled: true,
+                  preset: "Lead"
+                }
+              }
+            },
+            choirInfo: {
+              enabled: false,
+              offset: 0.08,
+              roomEffect: {
+                enabled: true,
+                position: {
+                  x: 0,
+                  y: 0
+                },
+                type: "Studio Room"
+              },
+              spread: 3
+            },
+            color: "#ff59ac",
+            extraInfo: {},
+            gain: 0,
+            inputSource: {
+              customDeviceChannel: -1,
+              customDeviceName: "",
+              type: "All"
+            },
+            language: "ENG",
+            listen: false,
+            mute: false,
+            name: metadata.title || "",
+            pan: 0,
+            patterns: [
+              {
+                clipDur: notes.length > 0 ? notes[notes.length - 1].tick + notes[notes.length - 1].duration : 4800,
+                clipPos: 0,
+                color: "",
+                dur: notes.length > 0 ? notes[notes.length - 1].tick + notes[notes.length - 1].duration : 4800,
+                enabled: true,
+                extraInfo: {},
+                name: "",
+                notes: notes.map((note, index) => {
+                  const aceParams = mapToAceParams(note.params);
+                  
+                  return {
+                    brLen: 0,
+                    dur: note.duration,
+                    extraInfo: {},
+                    freezedDefaultSyllable: note.lyric || "",
+                    headConsonants: [0.08707482993197278],
+                    language: "ENG",
+                    lyric: note.lyric || "",
+                    pitch: note.pitch,
+                    pos: note.tick,
+                    syllable: "",
+                    tailConsonants: note.lyric ? [0.08126984126984127, 0.029024943310657636] : [],
+                    vibrato: note.params.vibrato ? {
+                      amplitude: note.params.vibrato.depth / 100,
+                      attackLevel: 0.800000011920929,
+                      attackRatio: 0.20000000298023224,
+                      frequency: note.params.vibrato.rate / 10,
+                      phase: 0,
+                      releaseLevel: 1,
+                      releaseRatio: 0.10000002384185791,
+                      startPos: note.params.vibrato.delay || 109
+                    } : undefined
+                  };
+                }),
+                parameters: {
+                  breathiness: [],
+                  energy: [],
+                  falsetto: [],
+                  gender: [],
+                  pitchDelta: [],
+                  realBreathiness: [],
+                  realEnergy: [],
+                  realFalsetto: [],
+                  realTension: [],
+                  tension: notes.map(note => ({
+                    offset: note.tick,
+                    type: "data",
+                    values: [mapToAceParams(note.params).tension]
+                  }))
+                },
+                pos: 0,
+                timeUnit: "tick"
+              }
+            ],
+            record: false,
+            recordMode: "monophonic",
+            singers: [
+              {
+                gain: 0,
+                mute: false,
+                randomSeed: 0,
+                singer: {
+                  composition: [
+                    {
+                      code: 23175,
+                      lock: true,
+                      style: 1,
+                      timbre: 1
+                    }
+                  ],
+                  group: "@",
+                  head: -1,
+                  id: 12,
+                  name: "Misty",
+                  router: 6,
+                  state: "Unmixed"
+                }
+              }
+            ],
+            solo: false,
+            type: "sing"
+          }
+        ],
+        version: 10,
+        versionRevision: 1
       };
       
       // Convert JSON to bytes
       const encoder = new TextEncoder();
-      const jsonBytes = encoder.encode(JSON.stringify(simplifiedProject));
+      const jsonBytes = encoder.encode(JSON.stringify(realAceProject));
       
-      // Compress with zstd (level 5 for better compatibility)
-      const compressed = zstd.compress(jsonBytes, 5);
+      // Compress with zstd (level 10)
+      const compressed = zstd.compress(jsonBytes, 10);
       
       if (!compressed) {
         setStatus('❌ Compression failed');
@@ -667,25 +843,30 @@ export default function EABCToAceEncoder() {
         Math.floor(Math.random() * 16).toString(16)
       ).join('');
       
-      // Create simple ACEP envelope
+      // Create REAL ACEP envelope matching the exact format
       const acepData = {
         compressMethod: "zstd",
         content: base64,
+        debugInfo: {
+          os: "windows",
+          platform: "pc",
+          version: "10"
+        },
         salt: salt,
-        version: 1000  // Use original version for compatibility
+        version: 1000
       };
       
       const blob = new Blob([JSON.stringify(acepData, null, 2)], { type: 'application/json' });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = 'project-simple.acep';
+      a.download = 'project-real.acep';
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
       
-      setStatus('✅ Simple .acep downloaded (try this if the main one fails)!');
+      setStatus('✅ REAL Ace Studio .acep downloaded (should work now)!');
     } catch (err) {
       setStatus('❌ Error: ' + err.message);
       console.error(err);
@@ -764,12 +945,12 @@ export default function EABCToAceEncoder() {
                 .acep (v2000)
               </button>
               <button
-                onClick={downloadSimpleACEP}
+                onClick={downloadRealACEP}
                 disabled={!output || !zstd}
                 className="bg-orange-600 text-white px-4 py-2 rounded-lg hover:bg-orange-700 disabled:bg-gray-600 disabled:cursor-not-allowed flex items-center justify-center gap-2 transition-all"
               >
                 <Download className="w-4 h-4" />
-                .acep (Simple)
+                .acep (REAL Format)
               </button>
               <button
                 onClick={copyToClipboard}
@@ -788,11 +969,11 @@ export default function EABCToAceEncoder() {
               <ol className="list-decimal ml-5 space-y-1">
                 <li>Paste your EABC notation in the left box</li>
                 <li>Click <strong>"Convert to Ace Studio"</strong> (big purple button)</li>
-                <li>Try <strong>".acep (Simple)"</strong> first (orange button) - if that fails, try <strong>".acep (v2000)"</strong> (green button)</li>
+                <li>Click <strong>".acep (REAL Format)"</strong> (orange button) - this uses the exact Ace Studio format!</li>
                 <li>Open the .acep file in Ace Studio - it will import your notes, lyrics, and parameters!</li>
               </ol>
               <p className="mt-3 text-xs">
-                ✅ Fixed: Updated .acep format with better compatibility. Try the "Simple" version first if you get "invalid data" errors.
+                ✅ FIXED: Now using the REAL Ace Studio format reverse-engineered from actual .acep files!
               </p>
             </div>
           </div>
