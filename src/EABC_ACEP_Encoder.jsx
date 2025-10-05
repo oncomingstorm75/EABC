@@ -37,8 +37,9 @@ export default function EABCToAceEncoder() {
   
   useEffect(() => {
     // Initialize zstd codec
-    ZstdCodec.run(codec => {
-      setZstd(codec);
+    ZstdCodec.run(zstdCodec => {
+      const simple = new zstdCodec.Simple();
+      setZstd(simple);
     });
   }, []);
 
