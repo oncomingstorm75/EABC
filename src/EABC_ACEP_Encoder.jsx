@@ -116,29 +116,11 @@ export default function EABCToAceEncoder() {
         continue;
       }
       
-      // Use pending lyrics or check if next line has lyrics
+      // Use pending lyrics only - don't look ahead for lyrics
       let lineLyrics = [];
       if (pendingLyrics.length > 0) {
         lineLyrics = pendingLyrics;
-        pendingLyrics = [];
-      } else if (i + 1 < lines.length && (lines[i + 1].startsWith('w:') || lines[i + 1].startsWith('"w:') || lines[i + 1].startsWith("'w:"))) {
-        let lyricLine = lines[i + 1];
-        // Remove leading quotes and w: prefix
-        lyricLine = lyricLine.replace(/^["']?w:/, '').replace(/["']$/, '').trim();
-        
-        // Split by spaces and hyphens, but preserve underscores
-        const rawSyllables = lyricLine.split(/\s+/);
-        const syllables = [];
-        
-        for (let syl of rawSyllables) {
-          const parts = syl.split('-');
-          for (let part of parts) {
-            if (part) syllables.push(part);
-          }
-        }
-        
-        lineLyrics = syllables;
-        i++; // Skip the w: line in next iteration
+        pendingLyrics = []; // Clear pending lyrics after using them
       }
       
       // Parse parameters AND notes together (left-to-right, interleaved)
