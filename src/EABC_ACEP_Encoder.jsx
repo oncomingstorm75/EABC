@@ -243,6 +243,24 @@ export default function EABCToAceEncoder() {
             } else {
               lyric = sylText;
             }
+          } else if (lineLyrics.length > 0) {
+            // If we've run out of syllables but still have notes, use melisma (repeat last syllable)
+            // Find the last non-empty, non-melisma lyric from this line
+            for (let j = lineLyrics.length - 1; j >= 0; j--) {
+              if (lineLyrics[j] && lineLyrics[j] !== '_' && lineLyrics[j] !== '~') {
+                lyric = lineLyrics[j];
+                break;
+              }
+            }
+            // If no syllables found in this line, look at previous notes
+            if (!lyric) {
+              for (let j = notes.length - 1; j >= 0; j--) {
+                if (notes[j].lyric && notes[j].lyric !== '_' && notes[j].lyric !== '~') {
+                  lyric = notes[j].lyric;
+                  break;
+                }
+              }
+            }
           }
           
           notes.push({
@@ -518,7 +536,20 @@ export default function EABCToAceEncoder() {
       };
       
       setOutput(JSON.stringify(aceProject, null, 2));
-      setStatus(`✅ Converted ${notes.length} notes successfully!`);
+      
+      // Debug info about lyrics
+      const notesWithLyrics = notes.filter(n => n.lyric && n.lyric.trim() !== '');
+      const notesWithoutLyrics = notes.filter(n => !n.lyric || n.lyric.trim() === '');
+      
+      let statusMsg = `✅ Converted ${notes.length} notes successfully!`;
+      if (notesWithoutLyrics.length > 0) {
+        statusMsg += `\n⚠️ ${notesWithoutLyrics.length} notes have no lyrics (use _ for melisma)`;
+      }
+      if (notesWithLyrics.length > 0) {
+        statusMsg += `\n📝 ${notesWithLyrics.length} notes have lyrics`;
+      }
+      
+      setStatus(statusMsg);
     } catch (err) {
       setStatus('❌ Error: ' + err.message);
     }
