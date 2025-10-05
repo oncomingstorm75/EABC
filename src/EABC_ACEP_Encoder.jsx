@@ -193,14 +193,14 @@ export default function EABCToAceEncoder() {
         inlineLyrics.push(match[1]);
       }
       
-      // Remove inline lyrics from line for note parsing
-      const cleanLine = line.replace(/"[^"]+"/g, '');
+      // Remove inline lyrics from line for note parsing (cleanLine already defined above for note detection)
+      const noteLineClean = line.replace(/"[^"]+"/g, '');
       
       const notePattern = /([A-Ga-g][',]*|z|\[[^\]]+\])(\d*)(\/\d+)?/g;
       let noteMatch;
       let syllableIndex = 0;
       
-      while ((noteMatch = notePattern.exec(noteLineForParsing)) !== null) {
+      while ((noteMatch = notePattern.exec(noteLineClean)) !== null) {
         const [, pitch, multiplier, divisor] = noteMatch;
         
         if (pitch === 'z') {
