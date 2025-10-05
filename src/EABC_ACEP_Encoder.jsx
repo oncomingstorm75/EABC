@@ -2,6 +2,33 @@ import React, { useState } from 'react';
 import { Music, Download, FileText, Copy } from 'lucide-react';
 import pako from 'pako';
 
+/**
+ * EABC to Ace Studio Encoder
+ * 
+ * Supported EABC Parameters (map to Ace Studio's 6 core parameters):
+ * ✅ {ten:0-100} → tension (0.5-1.5)
+ * ✅ {wt:0-100} → tension (vocal weight)
+ * ✅ {intense:0-100} → tension (intensity)
+ * ✅ {br:0-100} → breathiness (0-2.0)
+ * ✅ {air:0-100} → breathiness (aspiration)
+ * ✅ {dyn:pp/p/mp/mf/f/ff} → energy (0.5-1.5)
+ * ✅ {eff:0-100} → energy (effort)
+ * ✅ {reg:chest/head/falsetto/mixed} → falsetto (0-1.0)
+ * ✅ {gen:-100 to +100} → gender (0.5-1.5)
+ * ✅ {fmt:-100 to +100} → gender (formant shift)
+ * ✅ {age:0-100} → gender (vocal age)
+ * ✅ {bend/scoop/fall/glide:cents} → pitchDelta (-200 to +200)
+ * ✅ {vib:depth,rate,delay} → vibrato object
+ * ✅ {expr:smile/cry/angry/breathy/belt} → combined parameter presets
+ * 
+ * Unsupported EABC Parameters (cannot map to Ace Studio):
+ * ❌ Acoustic: fry, growl, sub, harm, shim, vibjit, vibmod
+ * ❌ Articulation: tng, jaw, lip, res, width, bright
+ * ❌ Temporal: env, onset, offset, swing, ph
+ * ❌ Processing: comp, riff
+ * 
+ * See EABC_PARAMETER_MAPPING.md for full documentation.
+ */
 export default function EABCToAceEncoder() {
   const [input, setInput] = useState('');
   const [output, setOutput] = useState('');
@@ -21,7 +48,7 @@ export default function EABCToAceEncoder() {
     
     const notes = [];
     let currentParams = {};
-    let currentLyrics = '';
+    let pendingLyrics = []; // Store lyrics from w: lines
     let tickPosition = 0;
     const ticksPerQuarter = 480;
     
@@ -37,48 +64,82 @@ export default function EABCToAceEncoder() {
       }
     });
     
-    lines.forEach(line => {
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      
       // Skip metadata lines
       if (line.startsWith('T:') || line.startsWith('C:') || 
           line.startsWith('M:') || line.startsWith('L:') || 
-          line.startsWith('K:') || line.startsWith('Q:')) {
-        return;
+          line.startsWith('K:') || line.startsWith('Q:') ||
+          line.startsWith('X:')) {
+        continue;
       }
       
-      if (line.startsWith('w:') || line.startsWith('"w:')) {
-        const lyricLine = line.replace(/^"?w:/, '').replace(/"$/, '');
-        currentLyrics = lyricLine;
-        return;
+      // If this is a w: line, store it for the next note line
+      if (line.startsWith('w:')) {
+        const lyricLine = line.substring(2).trim();
+        pendingLyrics = lyricLine.split(/[\s-]+/).filter(s => s);
+        continue;
       }
       
+      // Use pending lyrics or check if next line has lyrics
+      let lineLyrics = [];
+      if (pendingLyrics.length > 0) {
+        lineLyrics = pendingLyrics;
+        pendingLyrics = [];
+      } else if (i + 1 < lines.length && lines[i + 1].startsWith('w:')) {
+        const lyricLine = lines[i + 1].substring(2).trim();
+        lineLyrics = lyricLine.split(/[\s-]+/).filter(s => s);
+        i++; // Skip the w: line in next iteration
+      }
+      
+      // Extract parameters from the line
       const paramMatches = line.matchAll(/\{([^}]+)\}/g);
       for (const match of paramMatches) {
         const paramStr = match[1];
         const parts = paramStr.split(':');
         const paramType = parts[0];
         
-        if (paramType === 'dyn') currentParams.dynamics = parts[1];
+        if (paramType === 'dyn' || paramType === 'eff') currentParams.dynamics = parts[1];
         else if (paramType === 'vib') {
-          const vibValues = paramStr.split(/[:,]/);
+          const vibValues = parts[1].split(',');
           currentParams.vibrato = {
-            depth: parseInt(vibValues[1]) || 50,
-            rate: parseInt(vibValues[2]) || 40,
-            delay: parseInt(vibValues[3]) || 0
+            depth: parseInt(vibValues[0]) || 50,
+            rate: parseInt(vibValues[1]) || 40,
+            delay: parseInt(vibValues[2]) || 0
           };
         }
-        else if (paramType === 'br') currentParams.breathiness = parseInt(parts[1]);
-        else if (paramType === 'ten') currentParams.tension = parseInt(parts[1]);
-        else if (paramType === 'gen') currentParams.gender = parseInt(parts[1]);
-        else if (paramType === 'reg') currentParams.register = parts[1];
+        else if (paramType === 'br' || paramType === 'air') currentParams.breathiness = parseFloat(parts[1]);
+        else if (paramType === 'ten' || paramType === 'wt' || paramType === 'intense') currentParams.tension = parseFloat(parts[1]);
+        else if (paramType === 'gen' || paramType === 'fmt' || paramType === 'age') currentParams.gender = parseFloat(parts[1]);
+        else if (paramType === 'reg') {
+          const regParts = parts[1].split(',');
+          currentParams.register = regParts[0];
+          if (regParts[1]) currentParams.registerBlend = parseFloat(regParts[1]);
+        }
+        else if (paramType === 'bend' || paramType === 'scoop' || paramType === 'fall' || paramType === 'glide') {
+          const bendParts = parts[1].split(',');
+          currentParams.pitchDelta = parseFloat(bendParts[0]) || 0;
+        }
         else if (paramType === 'expr') currentParams.expression = parts[1];
       }
       
+      // Parse notes and inline lyrics
+      // First, extract inline lyrics
+      const inlineLyrics = [];
+      const lyricMatches = line.matchAll(/"([^"]+)"/g);
+      for (const match of lyricMatches) {
+        inlineLyrics.push(match[1]);
+      }
+      
+      // Remove inline lyrics from line for note parsing
+      const cleanLine = line.replace(/"[^"]+"/g, '');
+      
       const notePattern = /([A-Ga-g][',]*|z|\[[^\]]+\])(\d*)(\/\d+)?/g;
       let noteMatch;
-      const lyricSyllables = currentLyrics.split(/[\s-]+/).filter(s => s);
       let syllableIndex = 0;
       
-      while ((noteMatch = notePattern.exec(line)) !== null) {
+      while ((noteMatch = notePattern.exec(cleanLine)) !== null) {
         const [, pitch, multiplier, divisor] = noteMatch;
         
         if (pitch === 'z') {
@@ -95,7 +156,14 @@ export default function EABCToAceEncoder() {
         
         const midiNote = pitchToMidi(pitch, metadata.key);
         const duration = calculateDuration(multiplier, divisor, metadata.length, ticksPerQuarter);
-        const lyric = lyricSyllables[syllableIndex] || '';
+        
+        // Use inline lyrics first, then line lyrics, then empty
+        let lyric = '';
+        if (inlineLyrics.length > syllableIndex) {
+          lyric = inlineLyrics[syllableIndex];
+        } else if (lineLyrics.length > syllableIndex) {
+          lyric = lineLyrics[syllableIndex];
+        }
         
         notes.push({
           tick: tickPosition,
@@ -108,9 +176,7 @@ export default function EABCToAceEncoder() {
         tickPosition += duration;
         syllableIndex++;
       }
-      
-      currentLyrics = '';
-    });
+    }
     
     return { metadata, notes };
   };
@@ -156,40 +222,72 @@ export default function EABCToAceEncoder() {
   const mapToAceParams = (params) => {
     const ace = {
       tension: 1.0,
-      breathiness: 1.0,
+      breathiness: 0.0,
       energy: 1.0,
       falsetto: 0.0,
-      gender: 1.0
+      gender: 1.0,
+      pitchDelta: 0
     };
     
+    // TENSION: Maps from ten, wt, intense (0-100 -> 0.5-1.5)
     if (params.tension !== undefined) {
-      ace.tension = 0.7 + (params.tension / 100) * 0.6;
+      ace.tension = 0.5 + (params.tension / 100) * 1.0;
     }
     
+    // BREATHINESS: Maps from br, air (0-100 -> 0-2.0)
     if (params.breathiness !== undefined) {
-      ace.breathiness = 0.7 + (params.breathiness / 100) * 0.6;
+      ace.breathiness = (params.breathiness / 100) * 2.0;
     }
     
+    // ENERGY: Maps from dyn, eff (0-100 or dynamics marking -> 0.5-1.5)
     if (params.dynamics) {
       const dynMap = { 
-        'pp': 0.6, 'p': 0.8, 'mp': 0.9, 
+        'pp': 0.5, 'p': 0.7, 'mp': 0.85, 
         'mf': 1.0, 'f': 1.2, 'ff': 1.4, 
-        'fff': 1.5, 'ffff': 1.6 
+        'fff': 1.5 
       };
-      ace.energy = dynMap[params.dynamics] || 1.0;
+      ace.energy = dynMap[params.dynamics] || (params.dynamics / 100) * 1.0 + 0.5;
     }
     
-    if (params.register === 'falsetto' || params.register === 'head') {
+    // FALSETTO: Maps from reg (falsetto/head/mixed) (0-100 -> 0-1.0)
+    if (params.register === 'falsetto') {
+      ace.falsetto = 1.0;
+    } else if (params.register === 'head') {
+      ace.falsetto = 0.8;
+    } else if (params.register === 'mixed') {
+      // Use blend if provided, otherwise 50/50
+      ace.falsetto = params.registerBlend ? params.registerBlend / 100 : 0.5;
+    } else if (params.register === 'whistle') {
       ace.falsetto = 1.0;
     }
     
+    // GENDER: Maps from gen, fmt, age (-100 to +100 -> 0.5-1.5)
     if (params.gender !== undefined) {
-      ace.gender = 0.7 + ((params.gender + 100) / 200) * 0.6;
+      ace.gender = 0.5 + ((params.gender + 100) / 200) * 1.0;
     }
     
-    if (params.expression === 'tense') ace.tension = 1.4;
-    if (params.expression === 'breathy') ace.breathiness = 1.3;
-    if (params.expression === 'powerful') ace.energy = 1.4;
+    // PITCHDELTA: Maps from bend, scoop, fall, glide (-200 to +200 cents)
+    if (params.pitchDelta !== undefined) {
+      ace.pitchDelta = Math.max(-200, Math.min(200, params.pitchDelta));
+    }
+    
+    // Expression presets (override individual params)
+    if (params.expression === 'smile') {
+      ace.tension = 0.8;
+      ace.energy = 1.2;
+    } else if (params.expression === 'cry') {
+      ace.tension = 1.3;
+      ace.breathiness = 0.8;
+    } else if (params.expression === 'angry') {
+      ace.tension = 1.4;
+      ace.energy = 1.4;
+    } else if (params.expression === 'breathy') {
+      ace.breathiness = 1.5;
+      ace.tension = 0.7;
+    } else if (params.expression === 'belt') {
+      ace.energy = 1.5;
+      ace.tension = 1.3;
+    }
     
     return ace;
   };
@@ -221,7 +319,8 @@ export default function EABCToAceEncoder() {
           breathiness: aceParams.breathiness,
           energy: aceParams.energy,
           falsetto: aceParams.falsetto,
-          gender: aceParams.gender
+          gender: aceParams.gender,
+          pitchDelta: aceParams.pitchDelta
         };
         
         if (note.params.vibrato) {
@@ -250,7 +349,8 @@ export default function EABCToAceEncoder() {
               breathiness: aceNotes.map(n => ({ tick: n.pos, value: n.breathiness })),
               energy: aceNotes.map(n => ({ tick: n.pos, value: n.energy })),
               falsetto: aceNotes.map(n => ({ tick: n.pos, value: n.falsetto })),
-              gender: aceNotes.map(n => ({ tick: n.pos, value: n.gender }))
+              gender: aceNotes.map(n => ({ tick: n.pos, value: n.gender })),
+              pitchDelta: aceNotes.map(n => ({ tick: n.pos, value: n.pitchDelta }))
             }
           }
         ]
