@@ -89,7 +89,21 @@ export default function EABCToAceEncoder() {
         let lyricLine = line;
         // Remove leading quotes and w: prefix
         lyricLine = lyricLine.replace(/^["']?w:/, '').replace(/["']$/, '').trim();
-        pendingLyrics = lyricLine.split(/[\s-]+/).filter(s => s);
+        
+        // Split by spaces and hyphens, but preserve underscores
+        // Underscore (_) or tilde (~) = melisma (previous syllable continues)
+        const rawSyllables = lyricLine.split(/\s+/);
+        const syllables = [];
+        
+        for (let syl of rawSyllables) {
+          // Split by hyphens but keep parts
+          const parts = syl.split('-');
+          for (let part of parts) {
+            if (part) syllables.push(part);
+          }
+        }
+        
+        pendingLyrics = syllables;
         continue;
       }
       
@@ -102,7 +116,19 @@ export default function EABCToAceEncoder() {
         let lyricLine = lines[i + 1];
         // Remove leading quotes and w: prefix
         lyricLine = lyricLine.replace(/^["']?w:/, '').replace(/["']$/, '').trim();
-        lineLyrics = lyricLine.split(/[\s-]+/).filter(s => s);
+        
+        // Split by spaces and hyphens, but preserve underscores
+        const rawSyllables = lyricLine.split(/\s+/);
+        const syllables = [];
+        
+        for (let syl of rawSyllables) {
+          const parts = syl.split('-');
+          for (let part of parts) {
+            if (part) syllables.push(part);
+          }
+        }
+        
+        lineLyrics = syllables;
         i++; // Skip the w: line in next iteration
       }
       
@@ -183,12 +209,25 @@ export default function EABCToAceEncoder() {
         const midiNote = pitchToMidi(pitch, metadata.key);
         const duration = calculateDuration(multiplier, divisor, metadata.length, ticksPerQuarter);
         
-        // Use inline lyrics first, then line lyrics, then empty
+        // Use inline lyrics first, then line lyrics, handle melisma
         let lyric = '';
         if (inlineLyrics.length > syllableIndex) {
           lyric = inlineLyrics[syllableIndex];
         } else if (lineLyrics.length > syllableIndex) {
-          lyric = lineLyrics[syllableIndex];
+          const sylText = lineLyrics[syllableIndex];
+          
+          // Handle melisma: _ or ~ means repeat previous syllable
+          if (sylText === '_' || sylText === '~') {
+            // Find the last non-empty, non-melisma lyric
+            for (let j = notes.length - 1; j >= 0; j--) {
+              if (notes[j].lyric && notes[j].lyric !== '_' && notes[j].lyric !== '~') {
+                lyric = notes[j].lyric;
+                break;
+              }
+            }
+          } else {
+            lyric = sylText;
+          }
         }
         
         notes.push({
