@@ -16,15 +16,22 @@ K:C
 % Comments start with %
 
 % Lyrics go on the line BEFORE the notes
-w: Hel - lo world how are you
+w: Hel-lo world how are you
 {dyn:mf}{vib:50,40,20}C D E F G |
 
 % Or lyrics can go AFTER the notes
 C D E F G |
-w: Hel - lo world how are you
+w: Hel-lo world how are you
 
 % Parameters in curly braces, notes, then bar lines
 {ten:80}{br:30}{dyn:f}D E F G A |
+
+% Pitch bends apply to the NEXT note only
+{scoop:100}C D {bend:50}E F |  % C gets scoop, E gets bend
+
+% Melisma (one syllable across multiple notes)
+w: Hel-lo _ _ world
+C D E F G |  % "lo" holds across D, E, F
 ```
 
 ---
@@ -54,14 +61,15 @@ K:C                  % Key signature (C, D, Em, F#m, etc.)
 Lyrics come **BEFORE** the note line:
 
 ```abc
-w: Hel - lo world how are you
+w: Hel-lo world how are you
 C D E F G |
 ```
 
 **Rules**:
-- Start with `w:` (with or without quotes)
-- Separate syllables with spaces or hyphens: `Hel - lo` or `Hel lo`
-- One syllable per note
+- Start with `w:` (with or without quotes: `w:` or `"w:` both work)
+- **Use hyphens** to split syllables: `trea-sure` = 2 syllables
+- Spaces also separate syllables
+- One syllable per note (or use `_` for melisma)
 - No quotes around individual syllables
 
 #### **Style B: Post-line Lyrics**
@@ -85,6 +93,26 @@ C"Hel" D"lo" E"world" F"how" G"are" |
 
 ---
 
+#### **NEW: Melisma Support** ✨
+
+Use `_` (underscore) or `~` (tilde) to hold a syllable across multiple notes:
+
+```abc
+w: Hel-lo _ _ world
+C D E F G |
+```
+
+**Result:**
+- C → "Hel"
+- D → "lo"
+- E → "lo" (melisma - holds "lo")
+- F → "lo" (melisma - holds "lo")
+- G → "world"
+
+See [`MELISMA_GUIDE.md`](MELISMA_GUIDE.md) for complete details!
+
+---
+
 ### 3. **Parameter Format**
 
 Parameters go in `{curly braces}` BEFORE the notes they affect:
@@ -93,12 +121,24 @@ Parameters go in `{curly braces}` BEFORE the notes they affect:
 % Single parameter
 {dyn:f}C D E F |
 
-% Multiple parameters (stack them)
+% Multiple parameters (stack them at line start)
 {ten:80}{br:50}{dyn:ff}G A B c |
 
-% Parameters apply until changed
+% Parameters on SEPARATE line (before notes)
+{gen:-20}{dyn:mf}{ten:40}
+w: Sleep now my treasure
+D E F E |
+
+% Most parameters PERSIST until changed
 {dyn:mf}C D E F | G A B c |  % All notes are mf
 {dyn:f}d e f g |                % These are f
+
+% EXCEPTION: Pitch bends apply to ONE note only
+{scoop:100}C D {bend:50}E F |
+% C gets scoop:100, then cleared
+% D gets nothing (0)
+% E gets bend:50, then cleared
+% F gets nothing (0)
 ```
 
 ---
@@ -174,11 +214,14 @@ Only use these parameters - they convert to Ace Studio's 6 core parameters:
 {fmt:20}        % Formant shift (maps to gender)
 {age:25}        % Vocal age (maps to gender)
 
-% PITCH DELTA (-200 to +200 cents)
-{bend:50}       % Pitch bend up 50 cents
-{scoop:100}     % Scoop up to note
-{fall:150}      % Fall off at end
-{glide:40}      % Portamento/glide
+% PITCH DELTA (-200 to +200 cents) - PER-NOTE ONLY!
+{bend:50}       % Pitch bend up 50 cents (applies to next note only)
+{scoop:100}     % Scoop up to note (per-note)
+{fall:150}      % Fall off at end (per-note)
+{glide:40}      % Portamento/glide (per-note)
+
+% IMPORTANT: Pitch bends clear after each note!
+{scoop:100}C D E  → Only C has scoop, D and E have pitchDelta:0
 
 % VIBRATO
 {vib:70,45,20}  % depth:70, rate:45Hz, delay:20%
