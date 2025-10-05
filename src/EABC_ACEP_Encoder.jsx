@@ -249,6 +249,17 @@ export default function EABCToAceEncoder() {
         
         tickPosition += duration;
         syllableIndex++;
+        
+        // Clear note-specific parameters (should only apply to one note)
+        // Pitch bends, scoops, falls, glides are per-note effects
+        if (currentParams.pitchDelta !== undefined) {
+          delete currentParams.pitchDelta;
+        }
+        
+        // Vibrato can persist, but if you want it per-note, uncomment:
+        // if (currentParams.vibrato !== undefined) {
+        //   delete currentParams.vibrato;
+        // }
       }
     }
     
