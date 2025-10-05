@@ -107,6 +107,15 @@ export default function EABCToAceEncoder() {
         continue;
       }
       
+      // Check if this line has any actual notes (not just parameters)
+      const cleanLine = line.replace(/\{[^}]+\}/g, '').trim();
+      const hasNotes = /[A-Ga-gz]/.test(cleanLine);
+      
+      // Skip lines that are only parameters
+      if (!hasNotes) {
+        continue;
+      }
+      
       // Use pending lyrics or check if next line has lyrics
       let lineLyrics = [];
       if (pendingLyrics.length > 0) {
@@ -191,7 +200,7 @@ export default function EABCToAceEncoder() {
       let noteMatch;
       let syllableIndex = 0;
       
-      while ((noteMatch = notePattern.exec(cleanLine)) !== null) {
+      while ((noteMatch = notePattern.exec(cleanNoteLineForParsing)) !== null) {
         const [, pitch, multiplier, divisor] = noteMatch;
         
         if (pitch === 'z') {
