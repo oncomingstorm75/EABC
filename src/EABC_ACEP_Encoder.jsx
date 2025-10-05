@@ -61,17 +61,9 @@ export default function EABCToAceEncoder() {
     let tickPosition = 0;
     const ticksPerQuarter = 480;
     
-    lines.forEach(line => {
-      if (line.startsWith('T:')) metadata.title = line.substring(2).trim();
-      if (line.startsWith('C:')) metadata.composer = line.substring(2).trim();
-      if (line.startsWith('M:')) metadata.meter = line.substring(2).trim();
-      if (line.startsWith('L:')) metadata.length = line.substring(2).trim();
-      if (line.startsWith('K:')) metadata.key = line.substring(2).trim();
-      if (line.startsWith('Q:')) {
-        const tempoMatch = line.match(/(\d+\/\d+)=(\d+)/);
-        if (tempoMatch) metadata.tempo = parseInt(tempoMatch[2]);
-      }
-    });
+    // First pass: collect all w: lines and note lines separately
+    const lyricLines = [];
+    const noteLines = [];
     
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i];
@@ -84,44 +76,38 @@ export default function EABCToAceEncoder() {
         continue;
       }
       
-      // If this is a w: line (with or without quotes), store it for the next note line
+      // If this is a w: line, store it
       if (line.startsWith('w:') || line.startsWith('"w:') || line.startsWith("'w:")) {
         let lyricLine = line;
-        // Remove leading quotes and w: prefix
         lyricLine = lyricLine.replace(/^["']?w:/, '').replace(/["']$/, '').trim();
         
-        // Split by spaces and hyphens, but preserve underscores
-        // Underscore (_) or tilde (~) = melisma (previous syllable continues)
         const rawSyllables = lyricLine.split(/\s+/);
         const syllables = [];
         
         for (let syl of rawSyllables) {
-          // Split by hyphens but keep parts
           const parts = syl.split('-');
           for (let part of parts) {
             if (part) syllables.push(part);
           }
         }
         
-        pendingLyrics = syllables;
+        lyricLines.push(syllables);
         continue;
       }
       
-      // Check if this line has any actual notes (not just parameters)
+      // Check if this line has notes
       const cleanLine = line.replace(/\{[^}]+\}/g, '').trim();
       const hasNotes = /[A-Ga-gz]/.test(cleanLine);
       
-      // Skip lines that are only parameters
-      if (!hasNotes) {
-        continue;
+      if (hasNotes) {
+        noteLines.push({ line, index: i });
       }
-      
-      // Use pending lyrics only - don't look ahead for lyrics
-      let lineLyrics = [];
-      if (pendingLyrics.length > 0) {
-        lineLyrics = pendingLyrics;
-        pendingLyrics = []; // Clear pending lyrics after using them
-      }
+    }
+    
+    // Second pass: process each note line with its corresponding lyrics
+    for (let noteIndex = 0; noteIndex < noteLines.length; noteIndex++) {
+      const { line } = noteLines[noteIndex];
+      const lineLyrics = lyricLines[noteIndex] || []; // Use corresponding lyric line
       
       // Parse parameters AND notes together (left-to-right, interleaved)
       // This allows {bend:50}C D {fall:100}E to apply bends to specific notes
