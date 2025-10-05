@@ -141,51 +141,9 @@ export default function EABCToAceEncoder() {
         i++; // Skip the w: line in next iteration
       }
       
-      // Extract parameters from the line
-      const paramMatches = line.matchAll(/\{([^}]+)\}/g);
-      for (const match of paramMatches) {
-        const paramStr = match[1];
-        const parts = paramStr.split(':');
-        const paramType = parts[0];
-        const paramValue = parts[1];
-        
-        // Skip if value is empty or invalid
-        if (!paramValue || paramValue.trim() === '') continue;
-        
-        if (paramType === 'dyn' || paramType === 'eff') {
-          // Check for unsupported crescendo notation
-          if (paramValue.includes('<') || paramValue.includes('>')) {
-            // Use the target dynamic (after < or >)
-            const target = paramValue.split(/[<>]/).pop().trim();
-            if (target) currentParams.dynamics = target;
-          } else {
-            currentParams.dynamics = paramValue;
-          }
-        }
-        else if (paramType === 'vib') {
-          const vibValues = paramValue.split(',');
-          currentParams.vibrato = {
-            depth: parseInt(vibValues[0]) || 50,
-            rate: parseInt(vibValues[1]) || 40,
-            delay: parseInt(vibValues[2]) || 0
-          };
-        }
-        else if (paramType === 'br' || paramType === 'air') currentParams.breathiness = parseFloat(paramValue);
-        else if (paramType === 'ten' || paramType === 'wt' || paramType === 'intense') currentParams.tension = parseFloat(paramValue);
-        else if (paramType === 'gen' || paramType === 'fmt' || paramType === 'age') currentParams.gender = parseFloat(paramValue);
-        else if (paramType === 'reg') {
-          const regParts = paramValue.split(',');
-          currentParams.register = regParts[0];
-          if (regParts[1]) currentParams.registerBlend = parseFloat(regParts[1]);
-        }
-        else if (paramType === 'bend' || paramType === 'scoop' || paramType === 'fall' || paramType === 'glide') {
-          const bendParts = paramValue.split(',');
-          currentParams.pitchDelta = parseFloat(bendParts[0]) || 0;
-        }
-        else if (paramType === 'expr') currentParams.expression = paramValue;
-      }
+      // Parse parameters AND notes together (left-to-right, interleaved)
+      // This allows {bend:50}C D {fall:100}E to apply bends to specific notes
       
-      // Parse notes and inline lyrics
       // First, extract inline lyrics
       const inlineLyrics = [];
       const lyricMatches = line.matchAll(/"([^"]+)"/g);
@@ -193,73 +151,122 @@ export default function EABCToAceEncoder() {
         inlineLyrics.push(match[1]);
       }
       
-      // Remove inline lyrics from line for note parsing (cleanLine already defined above for note detection)
-      const noteLineClean = line.replace(/"[^"]+"/g, '');
-      
-      const notePattern = /([A-Ga-g][',]*|z|\[[^\]]+\])(\d*)(\/\d+)?/g;
-      let noteMatch;
+      // Parse parameters and notes in order using a combined pattern
+      const combinedPattern = /(\{[^}]+\})|([A-Ga-g][',]*\d*(?:\/\d+)?|z\d*(?:\/\d+)?|\[[^\]]+\]\d*(?:\/\d+)?)/g;
+      let match;
       let syllableIndex = 0;
       
-      while ((noteMatch = notePattern.exec(noteLineClean)) !== null) {
-        const [, pitch, multiplier, divisor] = noteMatch;
-        
-        if (pitch === 'z') {
-          const duration = calculateDuration(multiplier, divisor, metadata.length, ticksPerQuarter);
-          tickPosition += duration;
-          continue;
-        }
-        
-        if (pitch.startsWith('[')) {
-          const duration = calculateDuration(multiplier, divisor, metadata.length, ticksPerQuarter);
-          tickPosition += duration;
-          continue;
-        }
-        
-        const midiNote = pitchToMidi(pitch, metadata.key);
-        const duration = calculateDuration(multiplier, divisor, metadata.length, ticksPerQuarter);
-        
-        // Use inline lyrics first, then line lyrics, handle melisma
-        let lyric = '';
-        if (inlineLyrics.length > syllableIndex) {
-          lyric = inlineLyrics[syllableIndex];
-        } else if (lineLyrics.length > syllableIndex) {
-          const sylText = lineLyrics[syllableIndex];
+      while ((match = combinedPattern.exec(line)) !== null) {
+        // Check if it's a parameter
+        if (match[1]) {
+          const paramStr = match[1].substring(1, match[1].length - 1); // Remove { }
+          const parts = paramStr.split(':');
+          const paramType = parts[0];
+          const paramValue = parts[1];
           
-          // Handle melisma: _ or ~ means repeat previous syllable
-          if (sylText === '_' || sylText === '~') {
-            // Find the last non-empty, non-melisma lyric
-            for (let j = notes.length - 1; j >= 0; j--) {
-              if (notes[j].lyric && notes[j].lyric !== '_' && notes[j].lyric !== '~') {
-                lyric = notes[j].lyric;
-                break;
-              }
+          // Skip if value is empty or invalid
+          if (!paramValue || paramValue.trim() === '') continue;
+          
+          if (paramType === 'dyn' || paramType === 'eff') {
+            // Check for unsupported crescendo notation
+            if (paramValue.includes('<') || paramValue.includes('>')) {
+              const target = paramValue.split(/[<>]/).pop().trim();
+              if (target) currentParams.dynamics = target;
+            } else {
+              currentParams.dynamics = paramValue;
             }
-          } else {
-            lyric = sylText;
           }
+          else if (paramType === 'vib') {
+            const vibValues = paramValue.split(',');
+            currentParams.vibrato = {
+              depth: parseInt(vibValues[0]) || 50,
+              rate: parseInt(vibValues[1]) || 40,
+              delay: parseInt(vibValues[2]) || 0
+            };
+          }
+          else if (paramType === 'br' || paramType === 'air') currentParams.breathiness = parseFloat(paramValue);
+          else if (paramType === 'ten' || paramType === 'wt' || paramType === 'intense') currentParams.tension = parseFloat(paramValue);
+          else if (paramType === 'gen' || paramType === 'fmt' || paramType === 'age') currentParams.gender = parseFloat(paramValue);
+          else if (paramType === 'reg') {
+            const regParts = paramValue.split(',');
+            currentParams.register = regParts[0];
+            if (regParts[1]) currentParams.registerBlend = parseFloat(regParts[1]);
+          }
+          else if (paramType === 'bend' || paramType === 'scoop' || paramType === 'fall' || paramType === 'glide') {
+            const bendParts = paramValue.split(',');
+            currentParams.pitchDelta = parseFloat(bendParts[0]) || 0;
+          }
+          else if (paramType === 'expr') currentParams.expression = paramValue;
+          
+          continue;
         }
         
-        notes.push({
-          tick: tickPosition,
-          duration: duration,
-          pitch: midiNote,
-          lyric: lyric,
-          params: { ...currentParams }
-        });
-        
-        tickPosition += duration;
-        syllableIndex++;
-        
-        // Clear note-specific parameters (should only apply to one note)
-        // Pitch bends, scoops, falls, glides are per-note effects
-        if (currentParams.pitchDelta !== undefined) {
-          delete currentParams.pitchDelta;
+        // It's a note
+        if (match[2]) {
+          const fullNote = match[2];
+          const noteMatch = fullNote.match(/([A-Ga-g][',]*|z|\[[^\]]+\])(\d*)(\/\d+)?/);
+          if (!noteMatch) continue;
+          
+          const [, pitch, multiplier, divisor] = noteMatch;
+          
+          if (pitch === 'z') {
+            const duration = calculateDuration(multiplier, divisor, metadata.length, ticksPerQuarter);
+            tickPosition += duration;
+            continue;
+          }
+          
+          if (pitch.startsWith('[')) {
+            const duration = calculateDuration(multiplier, divisor, metadata.length, ticksPerQuarter);
+            tickPosition += duration;
+            continue;
+          }
+          
+          const midiNote = pitchToMidi(pitch, metadata.key);
+          const duration = calculateDuration(multiplier, divisor, metadata.length, ticksPerQuarter);
+          
+          // Use inline lyrics first, then line lyrics, handle melisma
+          let lyric = '';
+          if (inlineLyrics.length > syllableIndex) {
+            lyric = inlineLyrics[syllableIndex];
+          } else if (lineLyrics.length > syllableIndex) {
+            const sylText = lineLyrics[syllableIndex];
+            
+            // Handle melisma: _ or ~ means repeat previous syllable
+            if (sylText === '_' || sylText === '~') {
+              // Find the last non-empty, non-melisma lyric
+              for (let j = notes.length - 1; j >= 0; j--) {
+                if (notes[j].lyric && notes[j].lyric !== '_' && notes[j].lyric !== '~') {
+                  lyric = notes[j].lyric;
+                  break;
+                }
+              }
+            } else {
+              lyric = sylText;
+            }
+          }
+          
+          notes.push({
+            tick: tickPosition,
+            duration: duration,
+            pitch: midiNote,
+            lyric: lyric,
+            params: { ...currentParams }
+          });
+          
+          tickPosition += duration;
+          syllableIndex++;
+          
+          // Clear note-specific parameters (should only apply to one note)
+          // Pitch bends, scoops, falls, glides are per-note effects
+          if (currentParams.pitchDelta !== undefined) {
+            delete currentParams.pitchDelta;
+          }
+          
+          // Vibrato can persist, but if you want it per-note, uncomment:
+          // if (currentParams.vibrato !== undefined) {
+          //   delete currentParams.vibrato;
+          // }
         }
-        
-        // Vibrato can persist, but if you want it per-note, uncomment:
-        // if (currentParams.vibrato !== undefined) {
-        //   delete currentParams.vibrato;
-        // }
       }
     }
     
