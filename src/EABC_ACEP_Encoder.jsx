@@ -56,7 +56,7 @@ export default function EABCToAceEncoder() {
     };
     
     const notes = [];
-    let currentParams = {};
+    let currentParams = {}; // Parameters persist across lines until changed (like dynamics in music notation)
     let pendingLyrics = []; // Store lyrics from w: lines
     let tickPosition = 0;
     const ticksPerQuarter = 480;
@@ -112,29 +112,42 @@ export default function EABCToAceEncoder() {
         const paramStr = match[1];
         const parts = paramStr.split(':');
         const paramType = parts[0];
+        const paramValue = parts[1];
         
-        if (paramType === 'dyn' || paramType === 'eff') currentParams.dynamics = parts[1];
+        // Skip if value is empty or invalid
+        if (!paramValue || paramValue.trim() === '') continue;
+        
+        if (paramType === 'dyn' || paramType === 'eff') {
+          // Check for unsupported crescendo notation
+          if (paramValue.includes('<') || paramValue.includes('>')) {
+            // Use the target dynamic (after < or >)
+            const target = paramValue.split(/[<>]/).pop().trim();
+            if (target) currentParams.dynamics = target;
+          } else {
+            currentParams.dynamics = paramValue;
+          }
+        }
         else if (paramType === 'vib') {
-          const vibValues = parts[1].split(',');
+          const vibValues = paramValue.split(',');
           currentParams.vibrato = {
             depth: parseInt(vibValues[0]) || 50,
             rate: parseInt(vibValues[1]) || 40,
             delay: parseInt(vibValues[2]) || 0
           };
         }
-        else if (paramType === 'br' || paramType === 'air') currentParams.breathiness = parseFloat(parts[1]);
-        else if (paramType === 'ten' || paramType === 'wt' || paramType === 'intense') currentParams.tension = parseFloat(parts[1]);
-        else if (paramType === 'gen' || paramType === 'fmt' || paramType === 'age') currentParams.gender = parseFloat(parts[1]);
+        else if (paramType === 'br' || paramType === 'air') currentParams.breathiness = parseFloat(paramValue);
+        else if (paramType === 'ten' || paramType === 'wt' || paramType === 'intense') currentParams.tension = parseFloat(paramValue);
+        else if (paramType === 'gen' || paramType === 'fmt' || paramType === 'age') currentParams.gender = parseFloat(paramValue);
         else if (paramType === 'reg') {
-          const regParts = parts[1].split(',');
+          const regParts = paramValue.split(',');
           currentParams.register = regParts[0];
           if (regParts[1]) currentParams.registerBlend = parseFloat(regParts[1]);
         }
         else if (paramType === 'bend' || paramType === 'scoop' || paramType === 'fall' || paramType === 'glide') {
-          const bendParts = parts[1].split(',');
+          const bendParts = paramValue.split(',');
           currentParams.pitchDelta = parseFloat(bendParts[0]) || 0;
         }
-        else if (paramType === 'expr') currentParams.expression = parts[1];
+        else if (paramType === 'expr') currentParams.expression = paramValue;
       }
       
       // Parse notes and inline lyrics
@@ -209,22 +222,64 @@ export default function EABCToAceEncoder() {
 
   const pitchToMidi = (pitch, key) => {
     const noteMap = { 'C': 0, 'D': 2, 'E': 4, 'F': 5, 'G': 7, 'A': 9, 'B': 11 };
+    
+    // Key signature sharp/flat patterns
+    const keySignatures = {
+      'C': [], 'Am': [],
+      'G': ['F'], 'Em': ['F'],
+      'D': ['F', 'C'], 'Bm': ['F', 'C'],
+      'A': ['F', 'C', 'G'], 'F#m': ['F', 'C', 'G'],
+      'E': ['F', 'C', 'G', 'D'], 'C#m': ['F', 'C', 'G', 'D'],
+      'B': ['F', 'C', 'G', 'D', 'A'], 'G#m': ['F', 'C', 'G', 'D', 'A'],
+      'F#': ['F', 'C', 'G', 'D', 'A', 'E'], 'D#m': ['F', 'C', 'G', 'D', 'A', 'E'],
+      'C#': ['F', 'C', 'G', 'D', 'A', 'E', 'B'], 'A#m': ['F', 'C', 'G', 'D', 'A', 'E', 'B'],
+      'F': ['B'], 'Dm': ['B'],
+      'Bb': ['B', 'E'], 'Gm': ['B', 'E'],
+      'Eb': ['B', 'E', 'A'], 'Cm': ['B', 'E', 'A'],
+      'Ab': ['B', 'E', 'A', 'D'], 'Fm': ['B', 'E', 'A', 'D'],
+      'Db': ['B', 'E', 'A', 'D', 'G'], 'Bbm': ['B', 'E', 'A', 'D', 'G'],
+      'Gb': ['B', 'E', 'A', 'D', 'G', 'C'], 'Ebm': ['B', 'E', 'A', 'D', 'G', 'C'],
+      'Cb': ['B', 'E', 'A', 'D', 'G', 'C', 'F'], 'Abm': ['B', 'E', 'A', 'D', 'G', 'C', 'F']
+    };
+    
     const note = pitch[0].toUpperCase();
     let octave = 4;
     let midiNote = noteMap[note];
     
-    // Apply key signature accidentals
-    if (key && key.includes('#') && key[0] === note) {
-      midiNote++;
-    } else if (key && key.includes('b') && key[0] === note) {
-      midiNote--;
+    // Check for explicit accidentals in the note (^=sharp, _=flat, ==natural)
+    let hasAccidental = false;
+    for (let i = 0; i < pitch.length; i++) {
+      if (pitch[i] === '^') {
+        midiNote++;
+        hasAccidental = true;
+      } else if (pitch[i] === '_') {
+        midiNote--;
+        hasAccidental = true;
+      } else if (pitch[i] === '=') {
+        hasAccidental = true; // Natural - don't apply key signature
+      }
     }
     
+    // Apply key signature accidentals (only if no explicit accidental)
+    if (!hasAccidental && key && keySignatures[key]) {
+      const sharps = keySignatures[key];
+      if (sharps.includes(note)) {
+        // Sharps for sharp keys, flats for flat keys
+        if (key.includes('b')) {
+          midiNote--; // Flat
+        } else {
+          midiNote++; // Sharp
+        }
+      }
+    }
+    
+    // Handle octave markers
     for (let i = 1; i < pitch.length; i++) {
       if (pitch[i] === "'") octave++;
       if (pitch[i] === ",") octave--;
     }
     
+    // Lowercase notes are one octave higher
     if (pitch[0] === pitch[0].toLowerCase() && pitch[0] !== pitch[0].toUpperCase()) {
       octave++;
     }
@@ -233,6 +288,7 @@ export default function EABCToAceEncoder() {
   };
 
   const mapToAceParams = (params) => {
+    // Use consistent defaults that match Ace Studio's neutral settings
     const ace = {
       tension: 1.0,
       breathiness: 0.0,
@@ -259,7 +315,13 @@ export default function EABCToAceEncoder() {
         'mf': 1.0, 'f': 1.2, 'ff': 1.4, 
         'fff': 1.5 
       };
-      ace.energy = dynMap[params.dynamics] || (params.dynamics / 100) * 1.0 + 0.5;
+      // Try to get from map first, then try numeric parsing, default to 1.0 if invalid
+      if (dynMap[params.dynamics]) {
+        ace.energy = dynMap[params.dynamics];
+      } else if (!isNaN(params.dynamics)) {
+        ace.energy = 0.5 + (parseFloat(params.dynamics) / 100) * 1.0;
+      }
+      // If neither works, keep default 1.0
     }
     
     // FALSETTO: Maps from reg (falsetto/head/mixed) (0-100 -> 0-1.0)
