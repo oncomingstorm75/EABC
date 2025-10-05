@@ -200,7 +200,7 @@ export default function EABCToAceEncoder() {
       let noteMatch;
       let syllableIndex = 0;
       
-      while ((noteMatch = notePattern.exec(cleanNoteLineForParsing)) !== null) {
+      while ((noteMatch = notePattern.exec(noteLineForParsing)) !== null) {
         const [, pitch, multiplier, divisor] = noteMatch;
         
         if (pitch === 'z') {
