@@ -549,6 +549,10 @@ export default function EABCToAceEncoder() {
         statusMsg += `\n📝 ${notesWithLyrics.length} notes have lyrics`;
       }
       
+      // Debug: Show first few lyrics
+      const firstLyrics = notes.slice(0, 5).map(n => `"${n.lyric || 'NO_LYRIC'}"`).join(', ');
+      statusMsg += `\n🔍 First 5 lyrics: ${firstLyrics}`;
+      
       setStatus(statusMsg);
     } catch (err) {
       setStatus('❌ Error: ' + err.message);
