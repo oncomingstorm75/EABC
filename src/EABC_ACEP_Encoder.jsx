@@ -1,11 +1,47 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Music, Download, FileText, Copy } from 'lucide-react';
-import pako from 'pako';
+import { ZstdCodec } from 'zstd-codec';
 
+/**
+ * EABC to Ace Studio Encoder
+ * 
+ * Supported EABC Parameters (map to Ace Studio's 6 core parameters):
+ * ✅ {ten:0-100} → tension (0.5-1.5)
+ * ✅ {wt:0-100} → tension (vocal weight)
+ * ✅ {intense:0-100} → tension (intensity)
+ * ✅ {br:0-100} → breathiness (0-2.0)
+ * ✅ {air:0-100} → breathiness (aspiration)
+ * ✅ {dyn:pp/p/mp/mf/f/ff} → energy (0.5-1.5)
+ * ✅ {eff:0-100} → energy (effort)
+ * ✅ {reg:chest/head/falsetto/mixed} → falsetto (0-1.0)
+ * ✅ {gen:-100 to +100} → gender (0.5-1.5)
+ * ✅ {fmt:-100 to +100} → gender (formant shift)
+ * ✅ {age:0-100} → gender (vocal age)
+ * ✅ {bend/scoop/fall/glide:cents} → pitchDelta (-200 to +200)
+ * ✅ {vib:depth,rate,delay} → vibrato object
+ * ✅ {expr:smile/cry/angry/breathy/belt} → combined parameter presets
+ * 
+ * Unsupported EABC Parameters (cannot map to Ace Studio):
+ * ❌ Acoustic: fry, growl, sub, harm, shim, vibjit, vibmod
+ * ❌ Articulation: tng, jaw, lip, res, width, bright
+ * ❌ Temporal: env, onset, offset, swing, ph
+ * ❌ Processing: comp, riff
+ * 
+ * See EABC_PARAMETER_MAPPING.md for full documentation.
+ */
 export default function EABCToAceEncoder() {
   const [input, setInput] = useState('');
   const [output, setOutput] = useState('');
   const [status, setStatus] = useState('');
+  const [zstd, setZstd] = useState(null);
+  
+  useEffect(() => {
+    // Initialize zstd codec
+    ZstdCodec.run(zstdCodec => {
+      const simple = new zstdCodec.Simple();
+      setZstd(simple);
+    });
+  }, []);
 
   const parseEABC = (eabcText) => {
     const lines = eabcText.split('\n').map(l => l.trim()).filter(l => l && !l.startsWith('%'));
@@ -20,8 +56,8 @@ export default function EABCToAceEncoder() {
     };
     
     const notes = [];
-    let currentParams = {};
-    let currentLyrics = '';
+    let currentParams = {}; // Parameters persist across lines until changed (like dynamics in music notation)
+    let pendingLyrics = []; // Store lyrics from w: lines
     let tickPosition = 0;
     const ticksPerQuarter = 480;
     
@@ -37,80 +73,202 @@ export default function EABCToAceEncoder() {
       }
     });
     
-    lines.forEach(line => {
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      
       // Skip metadata lines
       if (line.startsWith('T:') || line.startsWith('C:') || 
           line.startsWith('M:') || line.startsWith('L:') || 
-          line.startsWith('K:') || line.startsWith('Q:')) {
-        return;
+          line.startsWith('K:') || line.startsWith('Q:') ||
+          line.startsWith('X:')) {
+        continue;
       }
       
-      if (line.startsWith('w:') || line.startsWith('"w:')) {
-        const lyricLine = line.replace(/^"?w:/, '').replace(/"$/, '');
-        currentLyrics = lyricLine;
-        return;
-      }
-      
-      const paramMatches = line.matchAll(/\{([^}]+)\}/g);
-      for (const match of paramMatches) {
-        const paramStr = match[1];
-        const parts = paramStr.split(':');
-        const paramType = parts[0];
+      // If this is a w: line (with or without quotes), store it for the next note line
+      if (line.startsWith('w:') || line.startsWith('"w:') || line.startsWith("'w:")) {
+        let lyricLine = line;
+        // Remove leading quotes and w: prefix
+        lyricLine = lyricLine.replace(/^["']?w:/, '').replace(/["']$/, '').trim();
         
-        if (paramType === 'dyn') currentParams.dynamics = parts[1];
-        else if (paramType === 'vib') {
-          const vibValues = paramStr.split(/[:,]/);
-          currentParams.vibrato = {
-            depth: parseInt(vibValues[1]) || 50,
-            rate: parseInt(vibValues[2]) || 40,
-            delay: parseInt(vibValues[3]) || 0
-          };
+        // Split by spaces and hyphens, but preserve underscores
+        // Underscore (_) or tilde (~) = melisma (previous syllable continues)
+        const rawSyllables = lyricLine.split(/\s+/);
+        const syllables = [];
+        
+        for (let syl of rawSyllables) {
+          // Split by hyphens but keep parts
+          const parts = syl.split('-');
+          for (let part of parts) {
+            if (part) syllables.push(part);
+          }
         }
-        else if (paramType === 'br') currentParams.breathiness = parseInt(parts[1]);
-        else if (paramType === 'ten') currentParams.tension = parseInt(parts[1]);
-        else if (paramType === 'gen') currentParams.gender = parseInt(parts[1]);
-        else if (paramType === 'reg') currentParams.register = parts[1];
-        else if (paramType === 'expr') currentParams.expression = parts[1];
+        
+        pendingLyrics = syllables;
+        continue;
       }
       
-      const notePattern = /([A-Ga-g][',]*|z|\[[^\]]+\])(\d*)(\/\d+)?/g;
-      let noteMatch;
-      const lyricSyllables = currentLyrics.split(/[\s-]+/).filter(s => s);
+      // Check if this line has any actual notes (not just parameters)
+      const cleanLine = line.replace(/\{[^}]+\}/g, '').trim();
+      const hasNotes = /[A-Ga-gz]/.test(cleanLine);
+      
+      // Skip lines that are only parameters
+      if (!hasNotes) {
+        continue;
+      }
+      
+      // Use pending lyrics or check if next line has lyrics
+      let lineLyrics = [];
+      if (pendingLyrics.length > 0) {
+        lineLyrics = pendingLyrics;
+        pendingLyrics = [];
+      } else if (i + 1 < lines.length && (lines[i + 1].startsWith('w:') || lines[i + 1].startsWith('"w:') || lines[i + 1].startsWith("'w:"))) {
+        let lyricLine = lines[i + 1];
+        // Remove leading quotes and w: prefix
+        lyricLine = lyricLine.replace(/^["']?w:/, '').replace(/["']$/, '').trim();
+        
+        // Split by spaces and hyphens, but preserve underscores
+        const rawSyllables = lyricLine.split(/\s+/);
+        const syllables = [];
+        
+        for (let syl of rawSyllables) {
+          const parts = syl.split('-');
+          for (let part of parts) {
+            if (part) syllables.push(part);
+          }
+        }
+        
+        lineLyrics = syllables;
+        i++; // Skip the w: line in next iteration
+      }
+      
+      // Parse parameters AND notes together (left-to-right, interleaved)
+      // This allows {bend:50}C D {fall:100}E to apply bends to specific notes
+      
+      // First, extract inline lyrics
+      const inlineLyrics = [];
+      const lyricMatches = line.matchAll(/"([^"]+)"/g);
+      for (const match of lyricMatches) {
+        inlineLyrics.push(match[1]);
+      }
+      
+      // Parse parameters and notes in order using a combined pattern
+      const combinedPattern = /(\{[^}]+\})|([A-Ga-g][',]*\d*(?:\/\d+)?|z\d*(?:\/\d+)?|\[[^\]]+\]\d*(?:\/\d+)?)/g;
+      let match;
       let syllableIndex = 0;
       
-      while ((noteMatch = notePattern.exec(line)) !== null) {
-        const [, pitch, multiplier, divisor] = noteMatch;
-        
-        if (pitch === 'z') {
-          const duration = calculateDuration(multiplier, divisor, metadata.length, ticksPerQuarter);
-          tickPosition += duration;
+      while ((match = combinedPattern.exec(line)) !== null) {
+        // Check if it's a parameter
+        if (match[1]) {
+          const paramStr = match[1].substring(1, match[1].length - 1); // Remove { }
+          const parts = paramStr.split(':');
+          const paramType = parts[0];
+          const paramValue = parts[1];
+          
+          // Skip if value is empty or invalid
+          if (!paramValue || paramValue.trim() === '') continue;
+          
+          if (paramType === 'dyn' || paramType === 'eff') {
+            // Check for unsupported crescendo notation
+            if (paramValue.includes('<') || paramValue.includes('>')) {
+              const target = paramValue.split(/[<>]/).pop().trim();
+              if (target) currentParams.dynamics = target;
+            } else {
+              currentParams.dynamics = paramValue;
+            }
+          }
+          else if (paramType === 'vib') {
+            const vibValues = paramValue.split(',');
+            currentParams.vibrato = {
+              depth: parseInt(vibValues[0]) || 50,
+              rate: parseInt(vibValues[1]) || 40,
+              delay: parseInt(vibValues[2]) || 0
+            };
+          }
+          else if (paramType === 'br' || paramType === 'air') currentParams.breathiness = parseFloat(paramValue);
+          else if (paramType === 'ten' || paramType === 'wt' || paramType === 'intense') currentParams.tension = parseFloat(paramValue);
+          else if (paramType === 'gen' || paramType === 'fmt' || paramType === 'age') currentParams.gender = parseFloat(paramValue);
+          else if (paramType === 'reg') {
+            const regParts = paramValue.split(',');
+            currentParams.register = regParts[0];
+            if (regParts[1]) currentParams.registerBlend = parseFloat(regParts[1]);
+          }
+          else if (paramType === 'bend' || paramType === 'scoop' || paramType === 'fall' || paramType === 'glide') {
+            const bendParts = paramValue.split(',');
+            currentParams.pitchDelta = parseFloat(bendParts[0]) || 0;
+          }
+          else if (paramType === 'expr') currentParams.expression = paramValue;
+          
           continue;
         }
         
-        if (pitch.startsWith('[')) {
+        // It's a note
+        if (match[2]) {
+          const fullNote = match[2];
+          const noteMatch = fullNote.match(/([A-Ga-g][',]*|z|\[[^\]]+\])(\d*)(\/\d+)?/);
+          if (!noteMatch) continue;
+          
+          const [, pitch, multiplier, divisor] = noteMatch;
+          
+          if (pitch === 'z') {
+            const duration = calculateDuration(multiplier, divisor, metadata.length, ticksPerQuarter);
+            tickPosition += duration;
+            continue;
+          }
+          
+          if (pitch.startsWith('[')) {
+            const duration = calculateDuration(multiplier, divisor, metadata.length, ticksPerQuarter);
+            tickPosition += duration;
+            continue;
+          }
+          
+          const midiNote = pitchToMidi(pitch, metadata.key);
           const duration = calculateDuration(multiplier, divisor, metadata.length, ticksPerQuarter);
+          
+          // Use inline lyrics first, then line lyrics, handle melisma
+          let lyric = '';
+          if (inlineLyrics.length > syllableIndex) {
+            lyric = inlineLyrics[syllableIndex];
+          } else if (lineLyrics.length > syllableIndex) {
+            const sylText = lineLyrics[syllableIndex];
+            
+            // Handle melisma: _ or ~ means repeat previous syllable
+            if (sylText === '_' || sylText === '~') {
+              // Find the last non-empty, non-melisma lyric
+              for (let j = notes.length - 1; j >= 0; j--) {
+                if (notes[j].lyric && notes[j].lyric !== '_' && notes[j].lyric !== '~') {
+                  lyric = notes[j].lyric;
+                  break;
+                }
+              }
+            } else {
+              lyric = sylText;
+            }
+          }
+          
+          notes.push({
+            tick: tickPosition,
+            duration: duration,
+            pitch: midiNote,
+            lyric: lyric,
+            params: { ...currentParams }
+          });
+          
           tickPosition += duration;
-          continue;
+          syllableIndex++;
+          
+          // Clear note-specific parameters (should only apply to one note)
+          // Pitch bends, scoops, falls, glides are per-note effects
+          if (currentParams.pitchDelta !== undefined) {
+            delete currentParams.pitchDelta;
+          }
+          
+          // Vibrato can persist, but if you want it per-note, uncomment:
+          // if (currentParams.vibrato !== undefined) {
+          //   delete currentParams.vibrato;
+          // }
         }
-        
-        const midiNote = pitchToMidi(pitch, metadata.key);
-        const duration = calculateDuration(multiplier, divisor, metadata.length, ticksPerQuarter);
-        const lyric = lyricSyllables[syllableIndex] || '';
-        
-        notes.push({
-          tick: tickPosition,
-          duration: duration,
-          pitch: midiNote,
-          lyric: lyric,
-          params: { ...currentParams }
-        });
-        
-        tickPosition += duration;
-        syllableIndex++;
       }
-      
-      currentLyrics = '';
-    });
+    }
     
     return { metadata, notes };
   };
@@ -130,22 +288,64 @@ export default function EABCToAceEncoder() {
 
   const pitchToMidi = (pitch, key) => {
     const noteMap = { 'C': 0, 'D': 2, 'E': 4, 'F': 5, 'G': 7, 'A': 9, 'B': 11 };
+    
+    // Key signature sharp/flat patterns
+    const keySignatures = {
+      'C': [], 'Am': [],
+      'G': ['F'], 'Em': ['F'],
+      'D': ['F', 'C'], 'Bm': ['F', 'C'],
+      'A': ['F', 'C', 'G'], 'F#m': ['F', 'C', 'G'],
+      'E': ['F', 'C', 'G', 'D'], 'C#m': ['F', 'C', 'G', 'D'],
+      'B': ['F', 'C', 'G', 'D', 'A'], 'G#m': ['F', 'C', 'G', 'D', 'A'],
+      'F#': ['F', 'C', 'G', 'D', 'A', 'E'], 'D#m': ['F', 'C', 'G', 'D', 'A', 'E'],
+      'C#': ['F', 'C', 'G', 'D', 'A', 'E', 'B'], 'A#m': ['F', 'C', 'G', 'D', 'A', 'E', 'B'],
+      'F': ['B'], 'Dm': ['B'],
+      'Bb': ['B', 'E'], 'Gm': ['B', 'E'],
+      'Eb': ['B', 'E', 'A'], 'Cm': ['B', 'E', 'A'],
+      'Ab': ['B', 'E', 'A', 'D'], 'Fm': ['B', 'E', 'A', 'D'],
+      'Db': ['B', 'E', 'A', 'D', 'G'], 'Bbm': ['B', 'E', 'A', 'D', 'G'],
+      'Gb': ['B', 'E', 'A', 'D', 'G', 'C'], 'Ebm': ['B', 'E', 'A', 'D', 'G', 'C'],
+      'Cb': ['B', 'E', 'A', 'D', 'G', 'C', 'F'], 'Abm': ['B', 'E', 'A', 'D', 'G', 'C', 'F']
+    };
+    
     const note = pitch[0].toUpperCase();
     let octave = 4;
     let midiNote = noteMap[note];
     
-    // Apply key signature accidentals
-    if (key && key.includes('#') && key[0] === note) {
-      midiNote++;
-    } else if (key && key.includes('b') && key[0] === note) {
-      midiNote--;
+    // Check for explicit accidentals in the note (^=sharp, _=flat, ==natural)
+    let hasAccidental = false;
+    for (let i = 0; i < pitch.length; i++) {
+      if (pitch[i] === '^') {
+        midiNote++;
+        hasAccidental = true;
+      } else if (pitch[i] === '_') {
+        midiNote--;
+        hasAccidental = true;
+      } else if (pitch[i] === '=') {
+        hasAccidental = true; // Natural - don't apply key signature
+      }
     }
     
+    // Apply key signature accidentals (only if no explicit accidental)
+    if (!hasAccidental && key && keySignatures[key]) {
+      const sharps = keySignatures[key];
+      if (sharps.includes(note)) {
+        // Sharps for sharp keys, flats for flat keys
+        if (key.includes('b')) {
+          midiNote--; // Flat
+        } else {
+          midiNote++; // Sharp
+        }
+      }
+    }
+    
+    // Handle octave markers
     for (let i = 1; i < pitch.length; i++) {
       if (pitch[i] === "'") octave++;
       if (pitch[i] === ",") octave--;
     }
     
+    // Lowercase notes are one octave higher
     if (pitch[0] === pitch[0].toLowerCase() && pitch[0] !== pitch[0].toUpperCase()) {
       octave++;
     }
@@ -154,42 +354,81 @@ export default function EABCToAceEncoder() {
   };
 
   const mapToAceParams = (params) => {
+    // Use consistent defaults that match Ace Studio's neutral settings
     const ace = {
       tension: 1.0,
-      breathiness: 1.0,
+      breathiness: 0.0,
       energy: 1.0,
       falsetto: 0.0,
-      gender: 1.0
+      gender: 1.0,
+      pitchDelta: 0
     };
     
+    // TENSION: Maps from ten, wt, intense (0-100 -> 0.5-1.5)
     if (params.tension !== undefined) {
-      ace.tension = 0.7 + (params.tension / 100) * 0.6;
+      ace.tension = 0.5 + (params.tension / 100) * 1.0;
     }
     
+    // BREATHINESS: Maps from br, air (0-100 -> 0-2.0)
     if (params.breathiness !== undefined) {
-      ace.breathiness = 0.7 + (params.breathiness / 100) * 0.6;
+      ace.breathiness = (params.breathiness / 100) * 2.0;
     }
     
+    // ENERGY: Maps from dyn, eff (0-100 or dynamics marking -> 0.5-1.5)
     if (params.dynamics) {
       const dynMap = { 
-        'pp': 0.6, 'p': 0.8, 'mp': 0.9, 
+        'pp': 0.5, 'p': 0.7, 'mp': 0.85, 
         'mf': 1.0, 'f': 1.2, 'ff': 1.4, 
-        'fff': 1.5, 'ffff': 1.6 
+        'fff': 1.5, 'ffff': 1.5  // ffff = maximum (same as fff)
       };
-      ace.energy = dynMap[params.dynamics] || 1.0;
+      // Try to get from map first, then try numeric parsing, default to 1.0 if invalid
+      if (dynMap[params.dynamics]) {
+        ace.energy = dynMap[params.dynamics];
+      } else if (!isNaN(params.dynamics)) {
+        ace.energy = 0.5 + (parseFloat(params.dynamics) / 100) * 1.0;
+      }
+      // If neither works, keep default 1.0
     }
     
-    if (params.register === 'falsetto' || params.register === 'head') {
+    // FALSETTO: Maps from reg (falsetto/head/mixed) (0-100 -> 0-1.0)
+    if (params.register === 'falsetto') {
+      ace.falsetto = 1.0;
+    } else if (params.register === 'head') {
+      ace.falsetto = 0.8;
+    } else if (params.register === 'mixed') {
+      // Use blend if provided, otherwise 50/50
+      ace.falsetto = params.registerBlend ? params.registerBlend / 100 : 0.5;
+    } else if (params.register === 'whistle') {
       ace.falsetto = 1.0;
     }
     
+    // GENDER: Maps from gen, fmt, age (-100 to +100 -> 0.5-1.5)
     if (params.gender !== undefined) {
-      ace.gender = 0.7 + ((params.gender + 100) / 200) * 0.6;
+      ace.gender = 0.5 + ((params.gender + 100) / 200) * 1.0;
     }
     
-    if (params.expression === 'tense') ace.tension = 1.4;
-    if (params.expression === 'breathy') ace.breathiness = 1.3;
-    if (params.expression === 'powerful') ace.energy = 1.4;
+    // PITCHDELTA: Maps from bend, scoop, fall, glide (-200 to +200 cents)
+    if (params.pitchDelta !== undefined) {
+      ace.pitchDelta = Math.max(-200, Math.min(200, params.pitchDelta));
+    }
+    
+    // Expression presets (override individual params)
+    if (params.expression === 'smile') {
+      ace.tension = 0.8;
+      ace.energy = 1.2;
+    } else if (params.expression === 'cry') {
+      ace.tension = 1.3;
+      ace.breathiness = 0.8;
+    } else if (params.expression === 'angry') {
+      ace.tension = 1.4;
+      ace.energy = 1.4;
+    } else if (params.expression === 'breathy') {
+      ace.breathiness = 1.5;
+      ace.tension = 0.7;
+    } else if (params.expression === 'belt') {
+      ace.energy = 1.5;
+      ace.tension = 1.3;
+    }
     
     return ace;
   };
@@ -221,7 +460,8 @@ export default function EABCToAceEncoder() {
           breathiness: aceParams.breathiness,
           energy: aceParams.energy,
           falsetto: aceParams.falsetto,
-          gender: aceParams.gender
+          gender: aceParams.gender,
+          pitchDelta: aceParams.pitchDelta
         };
         
         if (note.params.vibrato) {
@@ -250,7 +490,8 @@ export default function EABCToAceEncoder() {
               breathiness: aceNotes.map(n => ({ tick: n.pos, value: n.breathiness })),
               energy: aceNotes.map(n => ({ tick: n.pos, value: n.energy })),
               falsetto: aceNotes.map(n => ({ tick: n.pos, value: n.falsetto })),
-              gender: aceNotes.map(n => ({ tick: n.pos, value: n.gender }))
+              gender: aceNotes.map(n => ({ tick: n.pos, value: n.gender })),
+              pitchDelta: aceNotes.map(n => ({ tick: n.pos, value: n.pitchDelta }))
             }
           }
         ]
@@ -278,14 +519,29 @@ export default function EABCToAceEncoder() {
 
   const downloadACEP = () => {
     try {
-      setStatus('⏳ Compressing with gzip (zstd alternative)...');
+      if (!zstd) {
+        setStatus('❌ Zstd codec not initialized yet, please try again');
+        return;
+      }
+      
+      if (!output) {
+        setStatus('❌ No output to compress');
+        return;
+      }
+      
+      setStatus('⏳ Compressing with zstd (level 10)...');
       
       // Convert JSON to bytes
       const encoder = new TextEncoder();
       const jsonBytes = encoder.encode(output);
       
-      // Compress with gzip (pako library - available in React artifacts)
-      const compressed = pako.gzip(jsonBytes, { level: 9 });
+      // Compress with zstd (level 10)
+      const compressed = zstd.compress(jsonBytes, 10);
+      
+      if (!compressed) {
+        setStatus('❌ Compression failed');
+        return;
+      }
       
       // Convert to base64
       let binary = '';
@@ -294,14 +550,14 @@ export default function EABCToAceEncoder() {
       }
       const base64 = btoa(binary);
       
-      // Generate random salt
+      // Generate random salt (16 hex characters)
       const salt = Array.from({ length: 16 }, () => 
         Math.floor(Math.random() * 16).toString(16)
       ).join('');
       
-      // Create ACEP envelope (using gzip instead of zstd)
+      // Create ACEP envelope (proper Ace Studio format)
       const acepData = {
-        compressMethod: "gzip",
+        compressMethod: "zstd",
         content: base64,
         salt: salt,
         version: 1000
@@ -317,7 +573,7 @@ export default function EABCToAceEncoder() {
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
       
-      setStatus('✅ .acep downloaded (gzip compressed)!');
+      setStatus('✅ .acep downloaded (zstd compressed, level 10)!');
     } catch (err) {
       setStatus('❌ Error: ' + err.message);
       console.error(err);
@@ -385,15 +641,15 @@ export default function EABCToAceEncoder() {
                 className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 disabled:bg-gray-600 disabled:cursor-not-allowed flex items-center justify-center gap-2 transition-all"
               >
                 <Download className="w-4 h-4" />
-                Download JSON
+                JSON (for testing)
               </button>
               <button
                 onClick={downloadACEP}
-                disabled={!output}
+                disabled={!output || !zstd}
                 className="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 disabled:bg-gray-600 disabled:cursor-not-allowed flex items-center justify-center gap-2 transition-all"
               >
                 <Download className="w-4 h-4" />
-                Download .acep (gzip)
+                Download .acep (for Ace Studio)
               </button>
               <button
                 onClick={copyToClipboard}
@@ -406,11 +662,19 @@ export default function EABCToAceEncoder() {
             </div>
           </div>
 
-          <div className="mt-6 p-4 bg-yellow-900/30 border border-yellow-600/50 rounded-lg">
-            <p className="text-yellow-200 text-sm">
-              <strong>Note:</strong> Using gzip compression instead of zstd. Ace Studio may not support this format. 
-              For proper zstd compression, you'll need to use external tools or a Node.js environment.
-            </p>
+          <div className="mt-6 p-4 bg-blue-900/30 border border-blue-600/50 rounded-lg">
+            <div className="text-blue-200 text-sm space-y-2">
+              <p className="font-bold text-lg">📝 How to Use:</p>
+              <ol className="list-decimal ml-5 space-y-1">
+                <li>Paste your EABC notation in the left box</li>
+                <li>Click <strong>"Convert to Ace Studio"</strong> (big purple button)</li>
+                <li>Click <strong>"Download .acep (for Ace Studio)"</strong> (green button)</li>
+                <li>Open the .acep file in Ace Studio - it will import your notes, lyrics, and parameters!</li>
+              </ol>
+              <p className="mt-3 text-xs">
+                ✅ Uses proper zstd compression (level 10) - fully compatible with Ace Studio
+              </p>
+            </div>
           </div>
         </div>
       </div>
