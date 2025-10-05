@@ -83,9 +83,11 @@ export default function EABCToAceEncoder() {
         continue;
       }
       
-      // If this is a w: line, store it for the next note line
-      if (line.startsWith('w:')) {
-        const lyricLine = line.substring(2).trim();
+      // If this is a w: line (with or without quotes), store it for the next note line
+      if (line.startsWith('w:') || line.startsWith('"w:') || line.startsWith("'w:")) {
+        let lyricLine = line;
+        // Remove leading quotes and w: prefix
+        lyricLine = lyricLine.replace(/^["']?w:/, '').replace(/["']$/, '').trim();
         pendingLyrics = lyricLine.split(/[\s-]+/).filter(s => s);
         continue;
       }
@@ -95,8 +97,10 @@ export default function EABCToAceEncoder() {
       if (pendingLyrics.length > 0) {
         lineLyrics = pendingLyrics;
         pendingLyrics = [];
-      } else if (i + 1 < lines.length && lines[i + 1].startsWith('w:')) {
-        const lyricLine = lines[i + 1].substring(2).trim();
+      } else if (i + 1 < lines.length && (lines[i + 1].startsWith('w:') || lines[i + 1].startsWith('"w:') || lines[i + 1].startsWith("'w:"))) {
+        let lyricLine = lines[i + 1];
+        // Remove leading quotes and w: prefix
+        lyricLine = lyricLine.replace(/^["']?w:/, '').replace(/["']$/, '').trim();
         lineLyrics = lyricLine.split(/[\s-]+/).filter(s => s);
         i++; // Skip the w: line in next iteration
       }
