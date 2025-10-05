@@ -313,7 +313,7 @@ export default function EABCToAceEncoder() {
       const dynMap = { 
         'pp': 0.5, 'p': 0.7, 'mp': 0.85, 
         'mf': 1.0, 'f': 1.2, 'ff': 1.4, 
-        'fff': 1.5 
+        'fff': 1.5, 'ffff': 1.5  // ffff = maximum (same as fff)
       };
       // Try to get from map first, then try numeric parsing, default to 1.0 if invalid
       if (dynMap[params.dynamics]) {
