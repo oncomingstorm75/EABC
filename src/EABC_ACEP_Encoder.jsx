@@ -1,6 +1,6 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Music, Download, FileText, Copy } from 'lucide-react';
-import pako from 'pako';
+import { ZstdCodec } from 'zstd-codec';
 
 /**
  * EABC to Ace Studio Encoder
@@ -33,6 +33,14 @@ export default function EABCToAceEncoder() {
   const [input, setInput] = useState('');
   const [output, setOutput] = useState('');
   const [status, setStatus] = useState('');
+  const [zstd, setZstd] = useState(null);
+  
+  useEffect(() => {
+    // Initialize zstd codec
+    ZstdCodec.run(codec => {
+      setZstd(codec);
+    });
+  }, []);
 
   const parseEABC = (eabcText) => {
     const lines = eabcText.split('\n').map(l => l.trim()).filter(l => l && !l.startsWith('%'));
@@ -378,14 +386,29 @@ export default function EABCToAceEncoder() {
 
   const downloadACEP = () => {
     try {
-      setStatus('⏳ Compressing with gzip (zstd alternative)...');
+      if (!zstd) {
+        setStatus('❌ Zstd codec not initialized yet, please try again');
+        return;
+      }
+      
+      if (!output) {
+        setStatus('❌ No output to compress');
+        return;
+      }
+      
+      setStatus('⏳ Compressing with zstd (level 10)...');
       
       // Convert JSON to bytes
       const encoder = new TextEncoder();
       const jsonBytes = encoder.encode(output);
       
-      // Compress with gzip (pako library - available in React artifacts)
-      const compressed = pako.gzip(jsonBytes, { level: 9 });
+      // Compress with zstd (level 10)
+      const compressed = zstd.compress(jsonBytes, 10);
+      
+      if (!compressed) {
+        setStatus('❌ Compression failed');
+        return;
+      }
       
       // Convert to base64
       let binary = '';
@@ -394,14 +417,14 @@ export default function EABCToAceEncoder() {
       }
       const base64 = btoa(binary);
       
-      // Generate random salt
+      // Generate random salt (16 hex characters)
       const salt = Array.from({ length: 16 }, () => 
         Math.floor(Math.random() * 16).toString(16)
       ).join('');
       
-      // Create ACEP envelope (using gzip instead of zstd)
+      // Create ACEP envelope (proper Ace Studio format)
       const acepData = {
-        compressMethod: "gzip",
+        compressMethod: "zstd",
         content: base64,
         salt: salt,
         version: 1000
@@ -417,7 +440,7 @@ export default function EABCToAceEncoder() {
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
       
-      setStatus('✅ .acep downloaded (gzip compressed)!');
+      setStatus('✅ .acep downloaded (zstd compressed, level 10)!');
     } catch (err) {
       setStatus('❌ Error: ' + err.message);
       console.error(err);
@@ -506,10 +529,9 @@ export default function EABCToAceEncoder() {
             </div>
           </div>
 
-          <div className="mt-6 p-4 bg-yellow-900/30 border border-yellow-600/50 rounded-lg">
-            <p className="text-yellow-200 text-sm">
-              <strong>Note:</strong> Using gzip compression instead of zstd. Ace Studio may not support this format. 
-              For proper zstd compression, you'll need to use external tools or a Node.js environment.
+          <div className="mt-6 p-4 bg-blue-900/30 border border-blue-600/50 rounded-lg">
+            <p className="text-blue-200 text-sm">
+              <strong>✅ Proper Format:</strong> .acep files are compressed using zstd (level 10) and should import directly into Ace Studio.
             </p>
           </div>
         </div>
