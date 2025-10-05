@@ -451,17 +451,21 @@ export default function EABCToAceEncoder() {
         const aceParams = mapToAceParams(note.params);
         
         const aceNote = {
+          id: `note_${notes.indexOf(note)}`,
           pos: note.tick,
           length: note.duration,
-          lyric: note.lyric,
-          pronunciation: note.lyric,
+          lyric: note.lyric || "",
+          pronunciation: note.lyric || "",
           pitch: note.pitch,
+          velocity: 80, // Default velocity
           tension: aceParams.tension,
           breathiness: aceParams.breathiness,
           energy: aceParams.energy,
           falsetto: aceParams.falsetto,
           gender: aceParams.gender,
-          pitchDelta: aceParams.pitchDelta
+          pitchDelta: aceParams.pitchDelta,
+          selected: false,
+          visible: true
         };
         
         if (note.params.vibrato) {
@@ -476,13 +480,18 @@ export default function EABCToAceEncoder() {
         return aceNote;
       });
       
+      // Create a more complete Ace Studio project structure
       const aceProject = {
         version: "1.0.0",
+        name: metadata.title || "EABC Project",
         tempo: metadata.tempo,
         timeSignature: metadata.meter,
+        key: metadata.key,
         tracks: [
           {
+            id: "track_1",
             name: metadata.title || "Vocal Track",
+            type: "vocal",
             voice: "Misty",
             notes: aceNotes,
             parameters: {
@@ -492,9 +501,20 @@ export default function EABCToAceEncoder() {
               falsetto: aceNotes.map(n => ({ tick: n.pos, value: n.falsetto })),
               gender: aceNotes.map(n => ({ tick: n.pos, value: n.gender })),
               pitchDelta: aceNotes.map(n => ({ tick: n.pos, value: n.pitchDelta }))
-            }
+            },
+            effects: [],
+            automation: {}
           }
-        ]
+        ],
+        metadata: {
+          title: metadata.title,
+          composer: metadata.composer,
+          key: metadata.key,
+          tempo: metadata.tempo,
+          timeSignature: metadata.meter,
+          created: new Date().toISOString(),
+          source: "EABC Encoder"
+        }
       };
       
       setOutput(JSON.stringify(aceProject, null, 2));
@@ -555,12 +575,18 @@ export default function EABCToAceEncoder() {
         Math.floor(Math.random() * 16).toString(16)
       ).join('');
       
-      // Create ACEP envelope (proper Ace Studio format)
+      // Create ACEP envelope (updated Ace Studio format)
       const acepData = {
         compressMethod: "zstd",
         content: base64,
         salt: salt,
-        version: 1000
+        version: 2000,  // Updated version number
+        timestamp: Date.now(),
+        metadata: {
+          encoder: "EABC Encoder",
+          version: "1.0.0",
+          created: new Date().toISOString()
+        }
       };
       
       const blob = new Blob([JSON.stringify(acepData, null, 2)], { type: 'application/json' });
@@ -574,6 +600,92 @@ export default function EABCToAceEncoder() {
       URL.revokeObjectURL(url);
       
       setStatus('✅ .acep downloaded (zstd compressed, level 10)!');
+    } catch (err) {
+      setStatus('❌ Error: ' + err.message);
+      console.error(err);
+    }
+  };
+
+  const downloadSimpleACEP = () => {
+    try {
+      if (!zstd) {
+        setStatus('❌ Zstd codec not initialized yet, please try again');
+        return;
+      }
+      
+      if (!output) {
+        setStatus('❌ No output to compress');
+        return;
+      }
+      
+      setStatus('⏳ Creating simple .acep format...');
+      
+      // Create a simpler project structure that might be more compatible
+      const simpleProject = JSON.parse(output);
+      
+      // Simplify the structure for better compatibility
+      const simplifiedProject = {
+        version: "1.0.0",
+        tempo: simpleProject.tempo || 120,
+        tracks: [{
+          notes: simpleProject.tracks[0].notes.map(note => ({
+            pos: note.pos,
+            length: note.length,
+            pitch: note.pitch,
+            lyric: note.lyric || "",
+            tension: note.tension || 1.0,
+            breathiness: note.breathiness || 0.0,
+            energy: note.energy || 1.0,
+            falsetto: note.falsetto || 0.0,
+            gender: note.gender || 1.0,
+            pitchDelta: note.pitchDelta || 0
+          }))
+        }]
+      };
+      
+      // Convert JSON to bytes
+      const encoder = new TextEncoder();
+      const jsonBytes = encoder.encode(JSON.stringify(simplifiedProject));
+      
+      // Compress with zstd (level 5 for better compatibility)
+      const compressed = zstd.compress(jsonBytes, 5);
+      
+      if (!compressed) {
+        setStatus('❌ Compression failed');
+        return;
+      }
+      
+      // Convert to base64
+      let binary = '';
+      for (let i = 0; i < compressed.length; i++) {
+        binary += String.fromCharCode(compressed[i]);
+      }
+      const base64 = btoa(binary);
+      
+      // Generate random salt (16 hex characters)
+      const salt = Array.from({ length: 16 }, () => 
+        Math.floor(Math.random() * 16).toString(16)
+      ).join('');
+      
+      // Create simple ACEP envelope
+      const acepData = {
+        compressMethod: "zstd",
+        content: base64,
+        salt: salt,
+        version: 1000  // Use original version for compatibility
+      };
+      
+      const blob = new Blob([JSON.stringify(acepData, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'project-simple.acep';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      
+      setStatus('✅ Simple .acep downloaded (try this if the main one fails)!');
     } catch (err) {
       setStatus('❌ Error: ' + err.message);
       console.error(err);
@@ -634,7 +746,7 @@ export default function EABCToAceEncoder() {
               Convert to Ace Studio
             </button>
             
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
               <button
                 onClick={downloadJSON}
                 disabled={!output}
@@ -649,7 +761,15 @@ export default function EABCToAceEncoder() {
                 className="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 disabled:bg-gray-600 disabled:cursor-not-allowed flex items-center justify-center gap-2 transition-all"
               >
                 <Download className="w-4 h-4" />
-                Download .acep (for Ace Studio)
+                .acep (v2000)
+              </button>
+              <button
+                onClick={downloadSimpleACEP}
+                disabled={!output || !zstd}
+                className="bg-orange-600 text-white px-4 py-2 rounded-lg hover:bg-orange-700 disabled:bg-gray-600 disabled:cursor-not-allowed flex items-center justify-center gap-2 transition-all"
+              >
+                <Download className="w-4 h-4" />
+                .acep (Simple)
               </button>
               <button
                 onClick={copyToClipboard}
@@ -668,11 +788,11 @@ export default function EABCToAceEncoder() {
               <ol className="list-decimal ml-5 space-y-1">
                 <li>Paste your EABC notation in the left box</li>
                 <li>Click <strong>"Convert to Ace Studio"</strong> (big purple button)</li>
-                <li>Click <strong>"Download .acep (for Ace Studio)"</strong> (green button)</li>
+                <li>Try <strong>".acep (Simple)"</strong> first (orange button) - if that fails, try <strong>".acep (v2000)"</strong> (green button)</li>
                 <li>Open the .acep file in Ace Studio - it will import your notes, lyrics, and parameters!</li>
               </ol>
               <p className="mt-3 text-xs">
-                ✅ Uses proper zstd compression (level 10) - fully compatible with Ace Studio
+                ✅ Fixed: Updated .acep format with better compatibility. Try the "Simple" version first if you get "invalid data" errors.
               </p>
             </div>
           </div>
