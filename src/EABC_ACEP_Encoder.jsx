@@ -508,15 +508,15 @@ export default function EABCToAceEncoder() {
                 className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 disabled:bg-gray-600 disabled:cursor-not-allowed flex items-center justify-center gap-2 transition-all"
               >
                 <Download className="w-4 h-4" />
-                Download JSON
+                JSON (for testing)
               </button>
               <button
                 onClick={downloadACEP}
-                disabled={!output}
+                disabled={!output || !zstd}
                 className="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 disabled:bg-gray-600 disabled:cursor-not-allowed flex items-center justify-center gap-2 transition-all"
               >
                 <Download className="w-4 h-4" />
-                Download .acep (gzip)
+                Download .acep (for Ace Studio)
               </button>
               <button
                 onClick={copyToClipboard}
@@ -530,9 +530,18 @@ export default function EABCToAceEncoder() {
           </div>
 
           <div className="mt-6 p-4 bg-blue-900/30 border border-blue-600/50 rounded-lg">
-            <p className="text-blue-200 text-sm">
-              <strong>✅ Proper Format:</strong> .acep files are compressed using zstd (level 10) and should import directly into Ace Studio.
-            </p>
+            <div className="text-blue-200 text-sm space-y-2">
+              <p className="font-bold text-lg">📝 How to Use:</p>
+              <ol className="list-decimal ml-5 space-y-1">
+                <li>Paste your EABC notation in the left box</li>
+                <li>Click <strong>"Convert to Ace Studio"</strong> (big purple button)</li>
+                <li>Click <strong>"Download .acep (for Ace Studio)"</strong> (green button)</li>
+                <li>Open the .acep file in Ace Studio - it will import your notes, lyrics, and parameters!</li>
+              </ol>
+              <p className="mt-3 text-xs">
+                ✅ Uses proper zstd compression (level 10) - fully compatible with Ace Studio
+              </p>
+            </div>
           </div>
         </div>
       </div>
